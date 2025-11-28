@@ -23,6 +23,7 @@
 - 🧠 **上下文感知嵌入**：基于BERT的语义嵌入生成
 - 🔬 **拓扑数据分析**：持续同调（β1条码）、边界词提取
 - 📊 **交互式可视化**：Mapper骨架图（HTML）、UMAP降维
+- 📚 **理论构建辅助**：文献检索指南、理论观点整理工具
 
 ## 安装指南
 
@@ -30,7 +31,8 @@
 
 - Python 3.8+
 - 8GB+ RAM（推荐16GB用于大型文本）
-- GPU（可选，用于加速BERT嵌入）
+- CPU：多核CPU推荐（如AMD Ryzen 7系列）
+- GPU（可选，NVIDIA GPU推荐；AMD GPU需要ROCm支持）
 
 ### 1. 克隆仓库
 
@@ -216,6 +218,36 @@ python scripts/batch_analysis.py
 python scripts/report_shapes.py
 ```
 
+#### 生成理论构建辅助文档
+
+生成文献检索指南和AI检索提示词，帮助进行理论构建：
+
+```bash
+python scripts/generate_theory_guide.py
+```
+
+生成的文件位于 `artifacts/results/`：
+- `theory_search_guide.md` - 文献检索指南
+- `ai_search_prompts.md` - AI检索提示词（适用于Consensus等工具）
+- `theory_notes/theory_template.md` - 理论观点整理模板
+
+#### 硬件检测和配置优化
+
+检测您的硬件配置并提供优化建议：
+
+```bash
+python scripts/check_hardware.py
+```
+
+这将显示：
+- CPU和内存信息
+- GPU/CUDA支持情况
+- 针对您硬件的配置建议
+
+**AMD平台用户注意**：如果使用AMD GPU（如RX590），PyTorch默认不支持CUDA，会自动使用CPU。您的Ryzen 7 9700X性能很强，CPU模式已经足够快速。
+
+详细优化指南：`docs/HARDWARE_OPTIMIZATION.md`
+
 ## 输出文件说明
 
 ### 文本文件
@@ -251,6 +283,12 @@ python scripts/report_shapes.py
 - **位置**: `artifacts/results/analysis.md`
 - **格式**: Markdown
 - **内容**: 所有分析结果的汇总报告
+
+### 理论构建辅助文档
+
+- **检索指南**: `artifacts/results/theory_search_guide.md` - 文献检索策略和关键词
+- **AI提示词**: `artifacts/results/ai_search_prompts.md` - 用于Consensus等AI工具的查询提示词
+- **理论模板**: `artifacts/results/theory_notes/theory_template.md` - 理论观点整理模板
 
 ## 项目结构
 
@@ -317,9 +355,18 @@ open artifacts/mapper/2010_Point_Omega_mapper.html
 ### Q: 如何加速嵌入生成？
 
 A: 有几种方法：
-1. 使用更小的BERT模型（如 `prajjwal1/bert-tiny`）
-2. 设置环境变量 `USE_GPU=false` 如果GPU内存不足
-3. 减小 `batch_size` 配置
+1. **利用多核CPU**：Ryzen 7 9700X等高性能CPU已经很快
+2. 使用更小的BERT模型（如 `prajjwal1/bert-tiny`）
+3. 增加 `batch_size`（如果有充足内存，如32GB）
+4. 如果使用AMD GPU，建议使用CPU模式（PyTorch对AMD GPU支持有限）
+
+### Q: AMD GPU (RX590) 可以使用吗？
+
+A: 
+- **短期**：PyTorch默认不支持AMD GPU的CUDA，会自动使用CPU
+- **您的优势**：Ryzen 7 9700X的CPU性能很强，CPU推理速度已经足够快
+- **建议**：在配置中明确设置 `device: "cpu"` 以获得最佳性能和稳定性
+- **高级用户**：可以尝试安装ROCm，但支持可能不完善
 
 ### Q: OCR提取失败怎么办？
 

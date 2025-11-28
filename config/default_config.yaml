@@ -41,15 +41,18 @@ nlp:
   # 是否使用上下文感知嵌入（True）或静态词嵌入（False）
   context_aware: true
   # 批处理大小
-  batch_size: 32
+  # 32GB内存允许更大的批处理，可设置为48-64以提升性能
+  batch_size: 48
 
 embedding:
   # 嵌入模型名称
   model_name: "bert-base-cased"
   # 设备：'cuda', 'cpu', 或 'auto'
-  device: "auto"
+  # 注意：AMD GPU (RX590) 不支持CUDA，会自动回退到CPU
+  # 建议：明确设置为 'cpu' 以获得最佳性能和稳定性
+  device: "cpu"
   # 是否使用GPU
-  use_gpu: true
+  use_gpu: false
   # 最大序列长度
   max_length: 512
   # 是否平均池化（True）或使用[CLS]标记（False）
@@ -58,7 +61,8 @@ embedding:
 tda:
   # 采样策略：'maxmin' (覆盖) 或 'kmeans' (代表性)
   landmark_strategy: "kmeans" 
-  n_landmarks: 512
+  # 32GB内存和8核CPU允许更多地标，可提升分析精度
+  n_landmarks: 768
   # 只提取持久度超过这个阈值的环，过滤噪音
   persistence_threshold: 0.05
   # 提取的环数量（用于多环分析）
