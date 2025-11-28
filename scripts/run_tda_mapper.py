@@ -1,54 +1,82 @@
-import os
-from src.tda_analysis import analyze
-from src.mapper_visualization import visualize
+"""批量运行TDA和Mapper分析"""
+import logging
+from pathlib import Path
+
+from src.utils import load_config, setup_logging, get_path, get_project_root, ensure_dir
+from src.topology import analyze
+from src.visualizer import visualize
 
 
-def env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except Exception:
-        return default
+logger = logging.getLogger(__name__)
 
 
 def main():
-    root = os.getcwd()
-    emb_dir = os.path.join(root, 'artifacts', 'embeddings')
-    tda_dir = os.path.join(root, 'artifacts', 'tda')
-    map_dir = os.path.join(root, 'artifacts', 'mapper')
-    res_md = os.path.join(root, 'artifacts', 'results', 'analysis.md')
-    os.makedirs(tda_dir, exist_ok=True)
-    os.makedirs(map_dir, exist_ok=True)
-    k_landmarks = env_int('K_LANDMARKS', 256)
-
-    for name in os.listdir(emb_dir):
-        if not name.endswith('_embeddings.npz'):
+    """主函数 - 对嵌入目录中的所有文件进行TDA和可视化分析"""
+    # 加载配置
+    config = load_config()
+    
+    # 设置日志
+    log_level = getattr(logging, config.get('logging', {}).get('level', 'INFO').upper())
+    setup_logging(level=log_level)
+    
+    logger.info("批量运行TDA和Mapper分析")
+    
+    # 获取路径
+    root = get_project_root()
+    emb_dir = get_path(config, 'data.embeddings_dir', root)
+    tda_dir = get_path(config, 'data.tda_dir', root)
+    map_dir = get_path(config, 'data.mapper_dir', root)
+    results_dir = get_path(config, 'data.results_dir', root)
+    
+    ensure_dir(tda_dir)
+    ensure_dir(map_dir)
+    ensure_dir(results_dir)
+    
+    res_md = results_dir / 'analysis.md'
+    
+    # 处理所有嵌入文件
+    for name in sorted(emb_dir.glob('*_embeddings.npz')):
+        if not name.name.endswith('_embeddings.npz'):
             continue
-        npz = os.path.join(emb_dir, name)
+        
+        logger.info(f"处理: {name.name}")
+        
+        # TDA分析
         try:
-            tda_path, cycle_words, metrics = analyze(npz, tda_dir, k_landmarks=k_landmarks)
-        except Exception:
-            tda_path, cycle_words, metrics = "", [], (0.0, 0.0, 0.0)
+            tda_path, cycle_words, metrics = analyze(name, tda_dir, config)
+            logger.info(f"TDA分析成功")
+        except Exception as e:
+            tda_path, cycle_words, metrics = Path(""), [], (0.0, 0.0, 0.0)
+            logger.error(f"TDA分析失败: {e}", exc_info=True)
+        
+        # 可视化
         try:
-            html_path, summary_path = visualize(npz, map_dir)
-        except Exception:
-            html_path, summary_path = "", ""
+            html_path, summary_path = visualize(name, map_dir, config)
+            logger.info(f"可视化成功")
+        except Exception as e:
+            html_path, summary_path = None, None
+            logger.error(f"可视化失败: {e}", exc_info=True)
+        
+        # 写入结果
+        base_name = name.stem.replace('_embeddings', '')
         try:
             with open(res_md, 'a', encoding='utf-8') as md:
-                md.write(f"\n## {name.replace('_embeddings.npz','')} 分析结果\n")
-                md.write(f"- 嵌入文件：{npz}\n")
-                md.write(f"- β1 结果文件：{tda_path}\n")
-                b, d, p = metrics
-                md.write(f"- β1 条码：birth={b:.6f}, death={d:.6f}, persistence={p:.6f}\n")
-                if cycle_words:
-                    md.write(f"- 环边界词（样本≤40）：{', '.join(cycle_words[:40])}\n")
-                else:
-                    md.write("- 当前尺度未检出显著 β1 环或词集为空。\n")
+                md.write(f"\n## {base_name} 分析结果\n")
+                md.write(f"- 嵌入文件：{name}\n")
+                if tda_path:
+                    md.write(f"- β1 结果文件：{tda_path}\n")
+                    b, d, p = metrics
+                    md.write(f"- β1 条码：birth={b:.6f}, death={d:.6f}, persistence={p:.6f}\n")
+                    if cycle_words:
+                        md.write(f"- 环边界词（样本≤40）：{', '.join(cycle_words[:40])}\n")
+                    else:
+                        md.write("- 当前尺度未检出显著 β1 环或词集为空。\n")
                 if html_path:
                     md.write(f"- Mapper 骨架：{html_path}\n")
                 if summary_path:
                     md.write(f"- Mapper 摘要：{summary_path}\n")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"写入结果失败: {e}")
 
 
 if __name__ == '__main__':

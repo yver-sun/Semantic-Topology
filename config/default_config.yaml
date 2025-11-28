@@ -1,0 +1,83 @@
+project_name: "DeLillo_Topology"
+
+data:
+  input_dir: "artifacts/raw_texts"
+  output_dir: "artifacts"
+  texts_dir: "artifacts/texts"
+  embeddings_dir: "artifacts/embeddings"
+  tda_dir: "artifacts/tda"
+  mapper_dir: "artifacts/mapper"
+  results_dir: "artifacts/results"
+  # 是否启用OCR作为PDF提取失败时的回退方案
+  enable_ocr_fallback: true
+  # OCR引擎路径（如果使用Tesseract）
+  tesseract_path: null
+
+text_extraction:
+  # PDF提取库：'pdfminer' 或 'pymupdf'
+  pdf_library: "pdfminer"
+  # EPUB提取库：'ebooklib'
+  epub_library: "ebooklib"
+  # 最大句子数（0表示无限制）
+  max_sentences: 0
+  # 文本清理选项
+  cleanup: true
+  # 是否保留换行符
+  preserve_linebreaks: false
+
+nlp:
+  model: "bert-base-cased"
+  spacy_model: "en_core_web_sm"
+  # 仅保留这些词性，大幅降噪
+  keep_pos: ["NOUN", "PROPN", "ADJ", "VERB"]
+  # 扩展停用词表
+  extra_stopwords: ["said", "looked", "asked", "thing", "way", "time"]
+  min_word_length: 3
+  min_freq: 5
+  # 是否使用上下文感知嵌入（True）或静态词嵌入（False）
+  context_aware: true
+  # 批处理大小
+  batch_size: 32
+
+embedding:
+  # 嵌入模型名称
+  model_name: "bert-base-cased"
+  # 设备：'cuda', 'cpu', 或 'auto'
+  device: "auto"
+  # 是否使用GPU
+  use_gpu: true
+  # 最大序列长度
+  max_length: 512
+  # 是否平均池化（True）或使用[CLS]标记（False）
+  mean_pooling: false
+
+tda:
+  # 采样策略：'maxmin' (覆盖) 或 'kmeans' (代表性)
+  landmark_strategy: "kmeans" 
+  n_landmarks: 512
+  # 只提取持久度超过这个阈值的环，过滤噪音
+  persistence_threshold: 0.05
+  # 度量距离：'euclidean', 'cosine', 'manhattan'
+  metric: "euclidean"
+  # Vietoris-Rips复形的最大维度
+  max_dim: 1
+
+visualization:
+  # Mapper参数
+  mapper_neighbors: 15
+  mapper_overlap: 0.5
+  # UMAP降维参数
+  umap_n_neighbors: 15
+  umap_min_dist: 0.1
+  umap_n_components: 2
+  # DBSCAN聚类参数
+  dbscan_eps: 0.5
+  dbscan_min_samples: 10
+  # 输出格式
+  output_format: "html"
+  # 是否生成摘要
+  generate_summary: true
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: null  # 如果设置，日志将写入文件

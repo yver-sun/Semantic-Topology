@@ -1,58 +1,103 @@
-import os
-from src.tda_analysis import analyze
-from src.mapper_visualization import visualize
+"""分析英文嵌入文件的TDA和可视化"""
+import logging
+from pathlib import Path
+
+from src.utils import load_config, setup_logging, get_path, get_project_root, ensure_dir
+from src.topology import analyze
+from src.visualizer import visualize
+
+
+logger = logging.getLogger(__name__)
 
 
 def main():
-    root = os.getcwd()
-    emb_dir = os.path.join(root, 'artifacts', 'embeddings')
-    tda_dir = os.path.join(root, 'artifacts', 'tda')
-    map_dir = os.path.join(root, 'artifacts', 'mapper')
-    res_md = os.path.join(root, 'artifacts', 'results', 'analysis.md')
-    os.makedirs(tda_dir, exist_ok=True)
-    os.makedirs(map_dir, exist_ok=True)
+    """主函数 - 分析已有的嵌入文件"""
+    # 加载配置
+    config = load_config()
+    
+    # 设置日志
+    log_level = getattr(logging, config.get('logging', {}).get('level', 'INFO').upper())
+    setup_logging(level=log_level)
+    
+    logger.info("分析英文嵌入文件")
+    
+    # 获取路径
+    root = get_project_root()
+    emb_dir = get_path(config, 'data.embeddings_dir', root)
+    tda_dir = get_path(config, 'data.tda_dir', root)
+    map_dir = get_path(config, 'data.mapper_dir', root)
+    results_dir = get_path(config, 'data.results_dir', root)
+    
+    ensure_dir(tda_dir)
+    ensure_dir(map_dir)
+    ensure_dir(results_dir)
+    
+    res_md = results_dir / 'analysis.md'
+    
+    # 目标文件列表
     targets = [
         '2010 Point Omega (Delillo, Don [Delillo, Don]) (Z-Library)_embeddings.npz',
         '2016 Zero K  a novel (DeLillo, Don, author) (Z-Library)_embeddings.npz',
         '2020 The Silence (Don DeLillo) (Z-Library)_embeddings.npz',
     ]
+    
     for name in targets:
-        npz = os.path.join(emb_dir, name)
-        if not os.path.exists(npz):
+        npz_path = emb_dir / name
+        if not npz_path.exists():
+            logger.warning(f"文件不存在: {npz_path}")
             continue
+        
+        logger.info(f"处理: {name}")
         status_line = []
+        
+        # TDA分析
         try:
-            tda_path, cycle_words, metrics = analyze(npz, tda_dir, k_landmarks=256)
+            tda_path, cycle_words, metrics = analyze(npz_path, tda_dir, config)
             status_line.append("ANALYZE_OK")
+            logger.info(f"TDA分析成功: {tda_path}")
         except Exception as e:
-            tda_path, cycle_words, metrics = "", [], (0.0, 0.0, 0.0)
+            tda_path, cycle_words, metrics = Path(""), [], (0.0, 0.0, 0.0)
             status_line.append(f"ANALYZE_ERR:{e}")
+            logger.error(f"TDA分析失败: {e}", exc_info=True)
+        
+        # 可视化
         try:
-            html_path, summary_path = visualize(npz, map_dir)
+            html_path, summary_path = visualize(npz_path, map_dir, config)
             status_line.append("VIS_OK")
+            logger.info(f"可视化成功")
         except Exception as e:
-            html_path, summary_path = "", ""
+            html_path, summary_path = None, None
             status_line.append(f"VIS_ERR:{e}")
+            logger.error(f"可视化失败: {e}", exc_info=True)
+        
+        # 写入结果
         base = name.replace('_embeddings.npz', '')
-        with open(res_md, 'a', encoding='utf-8') as md:
-            md.write(f"\n## {base} 分析结果\n")
-            md.write(f"- 嵌入文件：{npz}\n")
-            md.write(f"- β1 结果文件：{tda_path}\n")
-            b, d, p = metrics
-            md.write(f"- β1 条码：birth={b:.6f}, death={d:.6f}, persistence={p:.6f}\n")
-            if cycle_words:
-                md.write(f"- 环边界词（样本≤40）：{', '.join(cycle_words[:40])}\n")
-            else:
-                md.write("- 当前尺度未检出显著 β1 环或词集为空。\n")
-            if html_path:
-                md.write(f"- Mapper 骨架：{html_path}\n")
-            if summary_path:
-                md.write(f"- Mapper 摘要：{summary_path}\n")
         try:
-            with open(os.path.join(root, 'artifacts', 'results', 'tda_status.txt'), 'a', encoding='utf-8') as st:
+            with open(res_md, 'a', encoding='utf-8') as md:
+                md.write(f"\n## {base} 分析结果\n")
+                md.write(f"- 嵌入文件：{npz_path}\n")
+                if tda_path:
+                    md.write(f"- β1 结果文件：{tda_path}\n")
+                    b, d, p = metrics
+                    md.write(f"- β1 条码：birth={b:.6f}, death={d:.6f}, persistence={p:.6f}\n")
+                    if cycle_words:
+                        md.write(f"- 环边界词（样本≤40）：{', '.join(cycle_words[:40])}\n")
+                    else:
+                        md.write("- 当前尺度未检出显著 β1 环或词集为空。\n")
+                if html_path:
+                    md.write(f"- Mapper 骨架：{html_path}\n")
+                if summary_path:
+                    md.write(f"- Mapper 摘要：{summary_path}\n")
+        except Exception as e:
+            logger.error(f"写入结果失败: {e}")
+        
+        # 写入状态
+        try:
+            status_file = results_dir / 'tda_status.txt'
+            with open(status_file, 'a', encoding='utf-8') as st:
                 st.write(f"{name}\t{'|'.join(status_line)}\n")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"写入状态失败: {e}")
 
 
 if __name__ == '__main__':
