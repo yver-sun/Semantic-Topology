@@ -30,6 +30,10 @@ nlp:
   spacy_model: "en_core_web_sm"
   # 仅保留这些词性，大幅降噪
   keep_pos: ["NOUN", "PROPN", "ADJ", "VERB"]
+  # 保留的依存关系（用于深度句法分析）
+  keep_dependencies: ["nsubj", "nsubjpass", "dobj", "pobj", "ROOT", "amod", "acomp", "attr", "nmod", "compound"]
+  # 是否使用依存句法分析（True）或仅词性过滤（False）
+  use_dependency_analysis: true
   # 扩展停用词表
   extra_stopwords: ["said", "looked", "asked", "thing", "way", "time"]
   min_word_length: 3
@@ -57,10 +61,16 @@ tda:
   n_landmarks: 512
   # 只提取持久度超过这个阈值的环，过滤噪音
   persistence_threshold: 0.05
+  # 提取的环数量（用于多环分析）
+  top_k_cycles: 5
   # 度量距离：'euclidean', 'cosine', 'manhattan'
   metric: "euclidean"
   # Vietoris-Rips复形的最大维度
   max_dim: 1
+  # 采样稳定性验证：重复采样次数（用于稳定性检查）
+  stability_n_runs: 3
+  # 是否启用采样稳定性验证
+  verify_stability: true
 
 visualization:
   # Mapper参数
@@ -77,6 +87,37 @@ visualization:
   output_format: "html"
   # 是否生成摘要
   generate_summary: true
+
+# 语义分析配置
+semantics:
+  # 概念词列表（用于语义锚定）
+  concept_words: ["Void", "God", "Silence", "Technology", "Nothingness", "Death", "Time", "Screen"]
+  # 语义距离度量：'euclidean' 或 'cosine'
+  distance_metric: "euclidean"
+  # 异质性阈值（用于分类环类型）
+  heterogeneity_threshold: 0.5
+  # 语义锚定中返回的最近概念词数量
+  top_k_concepts: 3
+
+# 动态分析配置（滑动窗口）
+dynamics:
+  # 滑动窗口大小（词数）
+  window_size: 5000
+  # 窗口步长（词数）
+  step_size: 1000
+  # 是否启用滑动窗口分析
+  enable_sliding_window: false
+  # 最小窗口持久度阈值
+  min_window_persistence: 0.05
+
+# 对比实验配置
+comparison:
+  # 对照组作者列表（用于对比分析）
+  control_authors: []
+  # 是否生成打乱文本（用于验证结构真实性）
+  generate_shuffled: false
+  # 统计显著性检验的置信水平
+  significance_level: 0.05
 
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR

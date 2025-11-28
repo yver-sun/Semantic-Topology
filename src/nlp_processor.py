@@ -14,6 +14,7 @@ except ImportError:
     logging.warning("spacy not available, using basic tokenization")
 
 from .utils import get_project_root
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
@@ -166,17 +167,15 @@ def process_text(
             freq_dict = {w: word_freq[w] for w in filtered_words if word_freq[w] >= min_freq}
             return filtered_words, labels, freq_dict
     
-    # 词性过滤
-    keep_pos = nlp_config.get('keep_pos', ['NOUN', 'PROPN', 'ADJ', 'VERB'])
-    extra_stopwords = nlp_config.get('extra_stopwords', [])
-    min_word_length = nlp_config.get('min_word_length', 3)
+    # 检查是否启用依存句法分析
+    use_dependency = nlp_config.get('use_dependency_analysis', True)
     
-    filtered = filter_by_pos(
+    # 词性+依存关系双重过滤
+    filtered = filter_by_pos_and_dependency(
         text,
         nlp_model,
-        keep_pos,
-        extra_stopwords,
-        min_word_length
+        config,
+        use_dependency=use_dependency
     )
     
     # 提取所有词（用于嵌入）
@@ -228,28 +227,71 @@ def extract_words_with_context(
     stop_words = set(STOP_WORDS) | set(w.lower() for w in extra_stopwords)
     keep_pos_set = set(keep_pos)
     
+    # 检查是否启用依存句法分析
+    use_dependency = nlp_config.get('use_dependency_analysis', True)
+    
     doc = nlp_model(text)
+    
+    # 确定保留的依存关系或词性
+    if use_dependency:
+        keep_dep = nlp_config.get('keep_dependencies', None)
+        if keep_dep is None:
+            keep_dep = ['nsubj', 'nsubjpass', 'dobj', 'pobj', 'ROOT', 
+                       'amod', 'acomp', 'attr', 'nmod', 'compound']
+        keep_dep_set = set(keep_dep)
+        keep_pos_set = None  # 不使用词性过滤，只使用依存关系
+    else:
+        keep_dep_set = None
+        keep_pos_set = set(keep_pos)
     
     # 先统计词频
     word_counter = Counter()
     for token in doc:
-        if (token.pos_ in keep_pos_set and
-            not token.is_stop and
-            token.text.lower() not in stop_words and
-            len(token.text) >= min_word_length and
-            token.is_alpha):
+        match = False
+        if use_dependency:
+            # 基于依存关系
+            if (keep_dep_set and token.dep_ in keep_dep_set and
+                not token.is_stop and
+                token.text.lower() not in stop_words and
+                len(token.text) >= min_word_length and
+                token.is_alpha and
+                token.pos_ in ['NOUN', 'PROPN', 'VERB', 'ADJ', 'ADV']):
+                match = True
+        else:
+            # 基于词性
+            if (token.pos_ in keep_pos_set and
+                not token.is_stop and
+                token.text.lower() not in stop_words and
+                len(token.text) >= min_word_length and
+                token.is_alpha):
+                match = True
+        
+        if match:
             word_counter[token.text.lower()] += 1
     
     # 提取词及其上下文
     words_with_context = []
     for token in doc:
-        if (token.pos_ in keep_pos_set and
-            not token.is_stop and
-            token.text.lower() not in stop_words and
-            len(token.text) >= min_word_length and
-            token.is_alpha and
-            word_counter[token.text.lower()] >= min_freq):
-            
+        match = False
+        if use_dependency:
+            # 基于依存关系
+            if (keep_dep_set and token.dep_ in keep_dep_set and
+                not token.is_stop and
+                token.text.lower() not in stop_words and
+                len(token.text) >= min_word_length and
+                token.is_alpha and
+                token.pos_ in ['NOUN', 'PROPN', 'VERB', 'ADJ', 'ADV']):
+                match = True
+        else:
+            # 基于词性
+            if (token.pos_ in keep_pos_set and
+                not token.is_stop and
+                token.text.lower() not in stop_words and
+                len(token.text) >= min_word_length and
+                token.is_alpha):
+                match = True
+        
+        if match and word_counter[token.text.lower()] >= min_freq:
             word = token.text.lower()
             context_start = max(0, token.idx - 50)
             context_end = min(len(text), token.idx + len(token.text) + 50)
@@ -263,4 +305,122 @@ def extract_words_with_context(
             ))
     
     return words_with_context
+
+
+def extract_syntactic_core(
+    text: str,
+    nlp_model: Any,
+    keep_dep: Optional[List[str]] = None,
+    extra_stopwords: List[str] = None,
+    min_word_length: int = 3
+) -> List[Tuple[str, str, str]]:
+    """
+    基于依存句法分析提取语义核心词（主语、宾语、核心谓语、修饰性形容词）
+    
+    创新点：只提取承载语义核心的词汇，过滤叙述性噪音
+    
+    Args:
+        text: 输入文本
+        nlp_model: Spacy模型（必须支持依存分析）
+        keep_dep: 保留的依存关系列表，默认保留：
+            - nsubj: 主语
+            - dobj: 直接宾语
+            - pobj: 介词宾语
+            - ROOT: 根节点（核心谓语）
+            - amod: 形容词修饰语
+            - acomp: 形容词补语
+            - attr: 属性
+        extra_stopwords: 额外的停用词列表
+        min_word_length: 最小词长度
+        
+    Returns:
+        [(词, 词性, 依存关系), ...] 列表
+    """
+    if not SPACY_AVAILABLE:
+        logger.warning("Spacy不可用，无法进行依存句法分析")
+        return []
+    
+    if keep_dep is None:
+        # 默认保留的依存关系：主语、宾语、核心谓语、修饰性形容词
+        keep_dep = ['nsubj', 'nsubjpass', 'dobj', 'pobj', 'ROOT', 
+                   'amod', 'acomp', 'attr', 'nmod', 'compound']
+    
+    if extra_stopwords is None:
+        extra_stopwords = []
+    
+    stop_words = set(STOP_WORDS) | set(w.lower() for w in extra_stopwords)
+    keep_dep_set = set(keep_dep)
+    
+    # 扩展的文学叙述性噪音停用词
+    literary_noise = {
+        'said', 'says', 'say', 'told', 'tell', 'asked', 'ask',
+        'looked', 'look', 'looks', 'saw', 'see', 'sees',
+        'went', 'go', 'goes', 'came', 'come', 'comes',
+        'thought', 'think', 'thinks', 'felt', 'feel', 'feels',
+        'know', 'knew', 'knows', 'seemed', 'seem', 'seems'
+    }
+    stop_words.update(literary_noise)
+    
+    doc = nlp_model(text)
+    
+    filtered = []
+    for token in doc:
+        # 检查条件：
+        # 1. 依存关系在保留列表中
+        # 2. 不是停用词
+        # 3. 满足最小长度
+        # 4. 是字母字符
+        # 5. 词性是实词（名词、动词、形容词）
+        if (token.dep_ in keep_dep_set and
+            not token.is_stop and
+            token.text.lower() not in stop_words and
+            len(token.text) >= min_word_length and
+            token.is_alpha and
+            token.pos_ in ['NOUN', 'PROPN', 'VERB', 'ADJ', 'ADV']):
+            filtered.append((token.text.lower(), token.pos_, token.dep_))
+    
+    return filtered
+
+
+def filter_by_pos_and_dependency(
+    text: str,
+    nlp_model: Any,
+    config: Dict,
+    use_dependency: bool = True
+) -> List[Tuple[str, str]]:
+    """
+    词性+依存关系的双重过滤机制
+    
+    Args:
+        text: 输入文本
+        nlp_model: Spacy模型
+        config: 配置字典
+        use_dependency: 是否使用依存关系过滤（默认True）
+        
+    Returns:
+        [(词, 词性), ...] 列表
+    """
+    nlp_config = config.get('nlp', {})
+    
+    if use_dependency:
+        # 使用依存句法分析
+        keep_dep = nlp_config.get('keep_dependencies', None)
+        extra_stopwords = nlp_config.get('extra_stopwords', [])
+        min_word_length = nlp_config.get('min_word_length', 3)
+        
+        syntactic_core = extract_syntactic_core(
+            text, nlp_model, keep_dep, extra_stopwords, min_word_length
+        )
+        
+        # 转换为(词, 词性)格式
+        return [(word, pos) for word, pos, dep in syntactic_core]
+    else:
+        # 回退到原有的词性过滤
+        keep_pos = nlp_config.get('keep_pos', ['NOUN', 'PROPN', 'ADJ', 'VERB'])
+        extra_stopwords = nlp_config.get('extra_stopwords', [])
+        min_word_length = nlp_config.get('min_word_length', 3)
+        
+        return filter_by_pos(
+            text, nlp_model, keep_pos, extra_stopwords, min_word_length
+        )
 

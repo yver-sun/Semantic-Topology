@@ -1,0 +1,43 @@
+# 语义概念词表配置
+# 用于拓扑语义锚定分析
+
+# 核心概念词（用于DeLillo晚期作品分析）
+core_concepts:
+  - "Void"
+  - "Silence"
+  - "Nothingness"
+  - "God"
+  - "Technology"
+  - "Screen"
+  - "Time"
+  - "Death"
+
+# 技术相关概念
+technology_concepts:
+  - "Technology"
+  - "Screen"
+  - "Data"
+  - "Digital"
+  - "Machine"
+  - "System"
+
+# 神学/存在相关概念
+theological_concepts:
+  - "God"
+  - "Void"
+  - "Silence"
+  - "Nothingness"
+  - "Transcendence"
+  - "Eternal"
+
+# 时间相关概念
+temporal_concepts:
+  - "Time"
+  - "Moment"
+  - "Duration"
+  - "Eternity"
+  - "Now"
+
+# 自定义概念词表（可根据研究需要添加）
+custom_concepts: []
+

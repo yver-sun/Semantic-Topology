@@ -110,6 +110,92 @@ def select_landmarks(
         raise ValueError(f"未知的地标选择策略: {strategy}")
 
 
+def verify_sampling_stability(
+    X: np.ndarray,
+    n_landmarks: int,
+    strategy: str = 'kmeans',
+    metric: str = 'euclidean',
+    n_runs: int = 3,
+    similarity_threshold: float = 0.7
+) -> Tuple[bool, float, List[np.ndarray]]:
+    """
+    验证采样稳定性：多次采样并检查一致性
+    
+    Args:
+        X: 嵌入矩阵
+        n_landmarks: 地标数量
+        strategy: 采样策略
+        metric: 距离度量
+        n_runs: 重复采样次数
+        similarity_threshold: 相似度阈值（Jaccard相似度）
+        
+    Returns:
+        (是否稳定, 平均相似度, 所有采样结果列表)
+    """
+    logger.info(f"验证采样稳定性（n_runs={n_runs}）")
+    
+    samples = []
+    for i in range(n_runs):
+        # 使用不同的随机种子
+        np.random.seed(42 + i)
+        sample = select_landmarks(X, n_landmarks, strategy, metric)
+        samples.append(sample)
+    
+    # 计算两两之间的Jaccard相似度
+    similarities = []
+    for i in range(n_runs):
+        for j in range(i + 1, n_runs):
+            set_i = set(samples[i])
+            set_j = set(samples[j])
+            intersection = len(set_i & set_j)
+            union = len(set_i | set_j)
+            jaccard = intersection / union if union > 0 else 0.0
+            similarities.append(jaccard)
+    
+    avg_similarity = np.mean(similarities) if similarities else 0.0
+    is_stable = avg_similarity >= similarity_threshold
+    
+    logger.info(f"采样稳定性: 平均相似度={avg_similarity:.4f}, 稳定={is_stable}")
+    
+    return is_stable, avg_similarity, samples
+
+
+def select_landmarks_stable(
+    X: np.ndarray,
+    n_landmarks: int,
+    config: Dict,
+    verify_stability: bool = True
+) -> np.ndarray:
+    """
+    选择地标点（带稳定性验证）
+    
+    Args:
+        X: 嵌入矩阵
+        n_landmarks: 地标数量
+        config: 配置字典
+        verify_stability: 是否验证稳定性
+        
+    Returns:
+        地标索引数组
+    """
+    strategy = config.get('tda', {}).get('landmark_strategy', 'kmeans')
+    metric = config.get('tda', {}).get('metric', 'euclidean')
+    
+    if verify_stability:
+        n_runs = config.get('tda', {}).get('stability_n_runs', 3)
+        is_stable, avg_sim, samples = verify_sampling_stability(
+            X, n_landmarks, strategy, metric, n_runs
+        )
+        
+        if not is_stable:
+            logger.warning(f"采样不稳定（相似度={avg_sim:.4f}），使用第一次采样结果")
+        
+        # 返回第一次采样结果
+        return samples[0] if samples else select_landmarks(X, n_landmarks, strategy, metric)
+    else:
+        return select_landmarks(X, n_landmarks, strategy, metric)
+
+
 def compute_persistence(
     X: np.ndarray,
     max_dim: int = 1,
@@ -197,6 +283,79 @@ def find_top_persistent_cycle(
     return None
 
 
+def extract_top_k_cycles(
+    dgms: List[np.ndarray],
+    cocycles: Dict,
+    k: int = 5,
+    persistence_threshold: float = 0.05,
+    dim: int = 1
+) -> List[Tuple[float, float, float, Any, int]]:
+    """
+    提取前K个持久度最高的循环
+    
+    创新点：不仅提取Top 1，而是提取多个显著环用于语义纯度分析
+    
+    Args:
+        dgms: 条码图列表
+        cocycles: 余循环字典
+        k: 提取的环数量
+        persistence_threshold: 持久度阈值
+        dim: 同调维数
+        
+    Returns:
+        [(birth, death, persistence, cocycle, cycle_index), ...] 列表，按持久度降序排序
+    """
+    if dim >= len(dgms) or dim < 0:
+        return []
+    
+    diagram = dgms[dim]
+    
+    if len(diagram) == 0:
+        logger.info(f"未检测到 {dim} 维同调类")
+        return []
+    
+    # 找到所有有限循环的持久度
+    finite_mask = np.isfinite(diagram[:, 1])
+    
+    if not np.any(finite_mask):
+        return []
+    
+    finite_diagram = diagram[finite_mask]
+    persistences = finite_diagram[:, 1] - finite_diagram[:, 0]
+    
+    # 过滤低于阈值的循环
+    valid_mask = persistences >= persistence_threshold
+    if not np.any(valid_mask):
+        logger.info(f"没有循环满足持久度阈值 {persistence_threshold}")
+        return []
+    
+    valid_indices = np.where(valid_mask)[0]
+    valid_persistences = persistences[valid_indices]
+    
+    # 按持久度降序排序，取前k个
+    sorted_indices = np.argsort(valid_persistences)[::-1][:k]
+    
+    cycles = []
+    for sorted_idx in sorted_indices:
+        orig_idx = valid_indices[sorted_idx]
+        birth, death = finite_diagram[orig_idx]
+        persistence = valid_persistences[sorted_idx]
+        
+        # 获取对应的余循环
+        # 注意：需要找到原始索引
+        finite_to_original = np.where(finite_mask)[0]
+        original_idx = finite_to_original[orig_idx]
+        
+        cocycle_key = (dim, original_idx)
+        cocycle = cocycles.get(cocycle_key)
+        
+        cycles.append((birth, death, persistence, cocycle, original_idx))
+    
+    logger.info(f"提取了 {len(cycles)} 个显著环（持久度 >= {persistence_threshold}）")
+    
+    return cycles
+
+
 def extract_cycle_words(
     cocycle: Any,
     landmark_indices: np.ndarray,
@@ -251,6 +410,113 @@ def extract_cycle_words(
     return list(cycle_words)
 
 
+def analyze_multiple_cycles(
+    embeddings_path: Path,
+    output_dir: Path,
+    config: Dict,
+    top_k: int = 5
+) -> Tuple[Path, List[Tuple[List[str], float, float, float]], Dict]:
+    """
+    执行拓扑数据分析，提取多个显著环
+    
+    Args:
+        embeddings_path: 嵌入文件路径（NPZ格式）
+        output_dir: 输出目录
+        config: 配置字典
+        top_k: 提取的环数量
+        
+    Returns:
+        (输出文件路径, [(词列表, birth, death, persistence), ...], 元数据字典)
+    """
+    embeddings_path = Path(embeddings_path)
+    output_dir = Path(output_dir)
+    ensure_dir(output_dir)
+    
+    logger.info(f"分析嵌入文件（多环模式）: {embeddings_path}")
+    
+    # 加载嵌入
+    data = np.load(embeddings_path, allow_pickle=True)
+    X = data['X']
+    labels = data['labels']
+    
+    logger.info(f"嵌入形状: {X.shape}, 标签数量: {len(labels)}")
+    
+    # TDA配置
+    tda_config = config.get('tda', {})
+    n_landmarks = tda_config.get('n_landmarks', 512)
+    strategy = tda_config.get('landmark_strategy', 'kmeans')
+    metric = tda_config.get('metric', 'euclidean')
+    persistence_threshold = tda_config.get('persistence_threshold', 0.05)
+    max_dim = tda_config.get('max_dim', 1)
+    
+    # 选择地标（带稳定性验证）
+    verify_stability = config.get('tda', {}).get('verify_stability', True)
+    landmark_indices = select_landmarks_stable(X, n_landmarks, config, verify_stability)
+    X_landmarks = X[landmark_indices]
+    
+    logger.info(f"选择了 {len(landmark_indices)} 个地标")
+    
+    # 计算持续同调
+    tda_result = compute_persistence(X_landmarks, max_dim=max_dim, metric=metric)
+    dgms = tda_result['dgms']
+    cocycles = tda_result['cocycles']
+    
+    # 提取前K个显著环
+    cycles = extract_top_k_cycles(
+        dgms,
+        cocycles,
+        k=top_k,
+        persistence_threshold=persistence_threshold,
+        dim=1  # β1
+    )
+    
+    if not cycles:
+        logger.warning("未找到显著的β1循环")
+        cycles_with_words = []
+        metadata = {
+            'num_cycles': 0,
+            'landmark_indices': landmark_indices.tolist()
+        }
+    else:
+        # 为每个环提取边界词
+        cycles_with_words = []
+        for birth, death, persistence, cocycle, cycle_idx in cycles:
+            cycle_words = extract_cycle_words(
+                cocycle,
+                landmark_indices,
+                labels,
+                X
+            )
+            cycles_with_words.append((cycle_words, birth, death, persistence))
+        
+        metadata = {
+            'num_cycles': len(cycles_with_words),
+            'landmark_indices': landmark_indices.tolist(),
+            'cycles_info': [
+                {'birth': b, 'death': d, 'persistence': p, 'size': len(w)}
+                for w, b, d, p in cycles_with_words
+            ]
+        }
+    
+    # 保存结果
+    base_name = embeddings_path.stem.replace('_embeddings', '')
+    safe_name = safe_filename(base_name)
+    output_path = output_dir / f"{safe_name}_beta1_multiple.npy"
+    
+    result_dict = {
+        'dgms': dgms,
+        'cocycles': cocycles,
+        'landmark_indices': landmark_indices,
+        'cycles': cycles_with_words,
+        'metadata': metadata
+    }
+    
+    np.save(output_path, result_dict, allow_pickle=True)
+    logger.info(f"保存多环TDA结果: {output_path}")
+    
+    return output_path, cycles_with_words, metadata
+
+
 def analyze(
     embeddings_path: Path,
     output_dir: Path,
@@ -288,8 +554,9 @@ def analyze(
     persistence_threshold = tda_config.get('persistence_threshold', 0.05)
     max_dim = tda_config.get('max_dim', 1)
     
-    # 选择地标
-    landmark_indices = select_landmarks(X, n_landmarks, strategy, metric)
+    # 选择地标（带稳定性验证）
+    verify_stability = config.get('tda', {}).get('verify_stability', True)
+    landmark_indices = select_landmarks_stable(X, n_landmarks, config, verify_stability)
     X_landmarks = X[landmark_indices]
     
     logger.info(f"选择了 {len(landmark_indices)} 个地标")
